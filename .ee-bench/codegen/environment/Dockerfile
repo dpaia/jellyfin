@@ -42,9 +42,7 @@ RUN git checkout {{ instance.base_commit }}
 RUN cd MediaBrowser.Model && dotnet add package System.Text.Json --version 8.0.5 && cd .. && \
     cd Emby.Server.Implementations && dotnet add package Microsoft.Extensions.Caching.Memory --version 9.0.0 && cd .. && \
     cd tests/Jellyfin.Server.Tests && dotnet add package Microsoft.Extensions.Options --version 9.0.0 && cd ../.. && \
-    dotnet add "./tests/Jellyfin.Model.Tests/Jellyfin.Model.Tests.csproj" package JUnitTestLogger && \
-    dotnet add "./tests/Jellyfin.Naming.Tests/Jellyfin.Naming.Tests.csproj" package JUnitTestLogger && \
-    dotnet add "./tests/Jellyfin.Server.Implementations.Tests/Jellyfin.Server.Implementations.Tests.csproj" package JUnitTestLogger && \
+    dotnet add "{{ instance.test_project }}" package JUnitTestLogger && \
     dotnet build
 
 LABEL ee-bench.type="codegen"
