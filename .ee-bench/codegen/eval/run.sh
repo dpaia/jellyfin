@@ -25,7 +25,9 @@ _run_tests() {
   dotnet test  "{{ instance.test_project }}" \
     --logger "junit;LogFilePath=$ARTIFACTS_DIR/tests.log"  \
     > "/tmp/${label}_stdout.log" 2> "/tmp/${label}_stderr.log"
+  local test_exit=$?
   set -e
+  echo "$test_exit" > "/tmp/${label}_exit_code"
 
   python3 "$EVAL_DIR/scripts/parser.py" "$ARTIFACTS_DIR" > "/tmp/${label}_parser.json" 2>/dev/null || echo '{}' > "/tmp/${label}_parser.json"
 
@@ -63,9 +65,11 @@ COMPILE_DURATION=$(_elapsed $COMPILE_START)
 # Run baseline tests (only if test_patch exists)
 # ============================================================
 BASELINE_DURATION=0
+BASELINE_TEST_EXIT_CODE=0
 if [ "$COMPILE_STATUS" = "pass" ] && [ "$HAS_TEST_PATCH" = "true" ]; then
   BASELINE_START=$SECONDS
   _run_tests baseline
+  BASELINE_TEST_EXIT_CODE="$(cat /tmp/baseline_exit_code 2>/dev/null || echo 0)"
   BASELINE_DURATION=$(_elapsed $BASELINE_START)
 fi
 
@@ -103,9 +107,11 @@ fi
 # Run eval tests (only if compilation and patch OK)
 # ============================================================
 TEST_DURATION=0
+EVAL_TEST_EXIT_CODE=0
 if [ "$COMPILE_STATUS" = "pass" ] && [ "$PATCH_STATUS" = "pass" ]; then
   TEST_START=$SECONDS
   _run_tests eval
+  EVAL_TEST_EXIT_CODE="$(cat /tmp/eval_exit_code 2>/dev/null || echo 0)"
   TEST_DURATION=$(_elapsed $TEST_START)
 fi
 
@@ -121,10 +127,10 @@ cat > /tmp/_expected.json << 'EXPECTED_EOF'
 EXPECTED_EOF
 
 # ============================================================
-# Emit EE-bench JSON v2.0 (6 criteria)
+# Emit EE-bench JSON v2.0
 # ============================================================
 export PATCH_STATUS PATCH_DURATION COMPILE_STATUS COMPILE_DURATION
 export TEST_DURATION BASELINE_DURATION OVERALL_DURATION TIMESTAMP
-export HAS_TEST_PATCH
+export HAS_TEST_PATCH BASELINE_TEST_EXIT_CODE EVAL_TEST_EXIT_CODE
 
 python3 "$EVAL_DIR/scripts/emitter.py"

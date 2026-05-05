@@ -2,6 +2,7 @@
 """Parse C# test result logs (JUnit XML or TRX) into EE-bench JSON."""
 import json
 import os
+import re
 import sys
 import xml.etree.ElementTree as ET
 
@@ -12,6 +13,25 @@ def _truncate(text: str, limit: int = MAX_STACKTRACE) -> str:
     if text and len(text) > limit:
         return text[:limit] + "\n... [truncated]"
     return text
+
+
+def _decode_json_unicode_escapes(name: str) -> str:
+    if "\\u" not in name:
+        return name
+
+    def replace_escape(match):
+        return chr(int(match.group(1), 16))
+
+    decoded = re.sub(r"\\u([0-9a-fA-F]{4})", replace_escape, name)
+    return decoded.encode("utf-16", "surrogatepass").decode("utf-16")
+
+
+def canonical_name(name: str) -> str:
+    return _decode_json_unicode_escapes(name).replace("+", ".")
+
+
+def match_keys(name: str) -> list[str]:
+    return sorted({name, canonical_name(name)})
 
 
 def parse_junit_xml(root: ET.Element) -> list[dict]:
@@ -37,6 +57,8 @@ def parse_junit_xml(root: ET.Element) -> list[dict]:
 
             entry = {
                 "name": full_name,
+                "canonical_name": canonical_name(full_name),
+                "match_keys": match_keys(full_name),
                 "duration_seconds": duration,
             }
 
@@ -90,6 +112,8 @@ def parse_trx(root: ET.Element) -> list[dict]:
 
         entry = {
             "name": name,
+            "canonical_name": canonical_name(name),
+            "match_keys": match_keys(name),
             "duration_seconds": duration,
         }
 
@@ -143,9 +167,9 @@ def detect_and_parse(artifacts_dir: str) -> list[dict]:
 
 def aggregate(methods: list[dict]) -> dict:
     """Build method-level aggregation and summary from parsed results."""
-    passed_names = []
-    failed_names = []
-    skipped_names = []
+    passed_entries = []
+    failed_entries = []
+    skipped_entries = []
     total_duration = 0.0
     n_errors = 0
 
@@ -153,30 +177,32 @@ def aggregate(methods: list[dict]) -> dict:
         total_duration += m.get("duration_seconds", 0.0)
         status = m["status"]
         if status == "passed":
-            passed_names.append(m["name"])
+            passed_entries.append(m)
         elif status == "failed":
-            failed_names.append(m["name"])
+            failed_entries.append(m)
             if m.get("type") == "error":
                 n_errors += 1
         elif status == "skipped":
-            skipped_names.append(m["name"])
+            skipped_entries.append(m)
 
-    n_passed = len(passed_names)
-    n_failed = len(failed_names)
-    n_skipped = len(skipped_names)
+    def unique_entries(entries: list[dict]) -> list[dict]:
+        by_name = {}
+        for entry in entries:
+            by_name.setdefault(entry["name"], entry)
+        return [by_name[name] for name in sorted(by_name)]
 
     return {
         "summary": {
             "total": len(methods),
-            "passed": n_passed,
-            "failed": n_failed - n_errors,
+            "passed": len(passed_entries),
+            "failed": len(failed_entries) - n_errors,
             "errors": n_errors,
-            "skipped": n_skipped,
+            "skipped": len(skipped_entries),
             "duration_seconds": round(total_duration, 3),
         },
-        "passed_tests": [{"name": n} for n in sorted(set(passed_names))],
-        "failed_tests": [{"name": n} for n in sorted(set(failed_names))],
-        "skipped_tests": [{"name": n} for n in sorted(set(skipped_names))],
+        "passed_tests": unique_entries(passed_entries),
+        "failed_tests": unique_entries(failed_entries),
+        "skipped_tests": unique_entries(skipped_entries),
         "methods": methods,
     }
 
